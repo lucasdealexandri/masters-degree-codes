@@ -7,6 +7,7 @@ class Particle:
     def __init__(self, label: Union[int, str], mass: float, charge: int):
         self.label = label
         self.mass = mass
+        self.charge = charge
         
     def __str__(self):
         return f"{self.label, self.mass, self.charge}"
