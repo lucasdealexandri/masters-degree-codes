@@ -115,16 +115,16 @@ if __name__ == '__main__':
     masses = [float(mass) for mass in sddm.physical_masses]
     print(f"ms = {sddm.ms}, mu = {sddm.mu}, y1 = {sddm.y1}, y2 = {sddm.y2}")
     print(sddm.physical_masses)
-    # print(sddm.tilde_BRW)
+    # print(sddm.tilde_BFW)
     
     particles = [Particle(label, mass, charge) for label, mass, charge in zip(range(5), masses, [0,0,0,1,1])]
     decay_channels = [
-        DecayChannel(particles[0],particles[3], sddm.tilde_BRW[0,0]), 
-        DecayChannel(particles[0],particles[4], sddm.tilde_BRW[1,0]), 
-        DecayChannel(particles[1],particles[3], sddm.tilde_BRW[0,1]), 
-        DecayChannel(particles[1],particles[4], sddm.tilde_BRW[1,1]), 
-        DecayChannel(particles[2],particles[3], sddm.tilde_BRW[0,2]), 
-        DecayChannel(particles[2],particles[4], sddm.tilde_BRW[1,2])
+        DecayChannel(particles[0],particles[3], sddm.tilde_BFW[0,0]), 
+        DecayChannel(particles[0],particles[4], sddm.tilde_BFW[1,0]), 
+        DecayChannel(particles[1],particles[3], sddm.tilde_BFW[0,1]), 
+        DecayChannel(particles[1],particles[4], sddm.tilde_BFW[1,1]), 
+        DecayChannel(particles[2],particles[3], sddm.tilde_BFW[0,2]), 
+        DecayChannel(particles[2],particles[4], sddm.tilde_BFW[1,2])
         ]
     
     # for channel in decay_channels:
