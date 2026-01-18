@@ -279,36 +279,50 @@ class SDDM:
         return np.sqrt((M**2 - (m1 + mW)**2)*(M**2 - (m1 - mW)**2)) / (2*M) * self.mass_factor(M, m1, third)
     
     def Z_matrix_element(self, charge: int, k1: int, k2: int):
+        M = max([self.mass_of[(charge, k1)], self.mass_of[(charge, k2)]])
+        m1 = min([self.mass_of[(charge, k1)], self.mass_of[(charge, k2)]])
         group_factor = lambda multiplet: multiplet[0]
-        return self.g / self.cW * sum(
+        return self.mass_factor(M, m1, "z") * self.g / self.cW * sum(
             group_factor(multiplet) * self.change_of_basis(charge, k1, multiplet) * self.change_of_basis(charge, k2, multiplet) 
             for multiplet in self.allowed_multiplets(charge)
             )
         
     def h_matrix_element(self, charge: int, k1: int, k2: int):
+        M = max([self.mass_of[(charge, k1)], self.mass_of[(charge, k2)]])
+        m1 = min([self.mass_of[(charge, k1)], self.mass_of[(charge, k2)]])
         def group_factor(multiplet1, multiplet2): 
             y1, j1, _ = multiplet1
             y2, j2, _ = multiplet2
             m1 = charge - y1
             m2 = m1 + 1/2
             return self.yukawa(multiplet1, multiplet2) * numerical_cg(j1, m1, j2, m2, 1/2, -1/2) * int(-0.05 < y2 - y1 + 1/2 < 0.05)
-        return 1 / np.sqrt(2) * sum(
+        return self.mass_factor(M, m1, "h") / np.sqrt(2) * sum(
             group_factor(multiplet1, multiplet2) * self.change_of_basis(charge, k1, multiplet1) * self.change_of_basis(charge, k2, multiplet2) 
             for multiplet1 in self.allowed_multiplets(charge) for multiplet2 in self.allowed_multiplets(charge)
             )
     
     # Related to the element \chi^q_{k1} \chi^{q-1}_{k2} W+
     def Wp_matrix_element(self, charge: int, k1: int, k2: int):
+        # If there is a consultation of a particle that does not exist, return 0.
+        if ((charge, k1) not in self.physical_particles or (charge-1, k2) not in self.physical_particles): 
+            return 0
+        M = max([self.mass_of[(charge, k1)], self.mass_of[(charge-1, k2)]])
+        m1 = min([self.mass_of[(charge, k1)], self.mass_of[(charge-1, k2)]])
         group_factor = lambda multiplet: np.sqrt(multiplet[0]*(multiplet[0] + 1) - (charge - multiplet[1])*(charge - multiplet[1] - 1))
-        return self.g / np.sqrt(2) * sum(
+        return self.mass_factor(M, m1, "W") * self.g / np.sqrt(2) * sum(
             group_factor(multiplet) * self.change_of_basis(charge, k1, multiplet) * self.change_of_basis(charge - 1, k2, multiplet) 
             for multiplet in self.allowed_multiplets(charge)
             )
         
     # Related to the element \chi^q_{k1} \chi^{q+1}_{k2} W-
     def Wm_matrix_element(self, charge: int, k1: int, k2: int):
+        # If there is a consultation of a particle that does not exist, return 0.
+        if ((charge, k1) not in self.physical_particles or (charge+1, k2) not in self.physical_particles): 
+            return 0
+        M = max([self.mass_of[(charge, k1)], self.mass_of[(charge+1, k2)]])
+        m1 = min([self.mass_of[(charge, k1)], self.mass_of[(charge+1, k2)]])
         group_factor = lambda multiplet: np.sqrt(multiplet[0]*(multiplet[0] + 1) - (charge - multiplet[1])*(charge - multiplet[1] + 1))
-        return sum(
+        return self.mass_factor(M, m1, "W") * sum(
             group_factor(multiplet) * self.change_of_basis(charge, k1, multiplet) * self.change_of_basis(charge + 1, k2, multiplet) 
             for multiplet in self.allowed_multiplets(charge)
             )
