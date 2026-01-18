@@ -1,3 +1,4 @@
+import cmath
 import numpy as np
 from sympy import N
 from typing import List
@@ -263,8 +264,13 @@ class SDDM:
         qp = 1/2 * (m1**2 + m2**2 - mM**2)
         # k . p
         kp = 1/2 * (m1**2 - m2**2 + mM**2)
+        # k . q
+        kq = 1/2 * (m1**2 - m2**2 - mM**2)
         
-        return (qp + 3*m1*m2 + 2*kp**2 / mM**2)
+        if third.lower() in ("w", "z"):
+            return (2*kp*kq) / mM ** 2 + (qp - 3*m1*m2)
+        elif third.lower() == "h":
+            return qp + m1*m2
     
     # p* times mass_factor
     def phase_space(self, M: float, m1: float, third: str = "W"):
@@ -427,9 +433,14 @@ if __name__ == "__main__":
     
     sddm = SDDM(None, ms = 2*800, mu = 1200, y1 = 0.1, y2 = 0.2)
     print(sddm.physical_masses)
-    print(sddm.generate_fr())
+    # print(sddm.generate_fr())
+    
+    print(np.array([[sddm.BR(p1, p2, "W") for p1 in sddm.physical_particles] for p2 in sddm.physical_particles]))
+    print()
+    print(np.array([[sddm.BR(p1, p2, "H") for p1 in sddm.physical_particles] for p2 in sddm.physical_particles]))
+    
     # print((sddm.BFW - sddm.tilde_BFW) / sddm.BFW)
-    # print(sddm.tilde_BFW)
+    print(sddm.tilde_BFW)
     # print(sddm.allowed_decays)
     # string = f"\\mathrm{{BR}}(\\chi^1_1 \\to \\chi^0_0 + W^+) = {sddm.BR((1,1), (0,0), "W"):.6f} && "
     # string += " && ".join([f"\\mathrm{{BR}}(\\chi^0_{k} \\to \\chi^1_1 + W^+) = {sddm.BR((0,k), (1,1), "W"):.6f}" for k in range(1,3)])
