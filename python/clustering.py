@@ -38,6 +38,8 @@ class DecayChannel:
 
 def cluster_particles(decays: List[DecayChannel]):
     sorted_decay: List[DecayChannel] = sorted(decays, key = lambda x: x.weight, reverse=True)
+    print(sorted_decay)
+    print([decay.weight for decay in sorted_decay])
     clusters: Dict[Particle, Set[Particle]] = {}
     possible_singlet: Set[Particle] = set()
     
@@ -89,7 +91,7 @@ def cluster_particles(decays: List[DecayChannel]):
             charge_conflict = False
             for p3 in clusters[p1]:
                 for p4 in clusters[p2]:
-                    if p3.charge == p3.charge: charge_conflict = True
+                    if p3.charge == p4.charge: charge_conflict = True
                 
             union = clusters[p1].union(clusters[p2])    
                 
@@ -111,7 +113,7 @@ if __name__ == '__main__':
     
     from SDDM import SDDM
     
-    sddm = SDDM(ms = 1200, mu = 700, y1 = 0.1, y2 = 0.01)
+    sddm = SDDM(ms = 800, mu = 1200, y1 = 0.1, y2 = 0.2)
     masses = [float(mass) for mass in sddm.physical_masses]
     print(f"ms = {sddm.ms}, mu = {sddm.mu}, y1 = {sddm.y1}, y2 = {sddm.y2}")
     print(sddm.physical_masses)
