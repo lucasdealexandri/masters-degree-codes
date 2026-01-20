@@ -1,5 +1,4 @@
 import itertools
-import functools
 import numpy as np
 from fractions import Fraction
 from more_itertools import consecutive_groups
@@ -259,6 +258,8 @@ class MultipletSolver:
         # If a singlet participates on a charged decay, it has to have a connection via Higgs to a multiplet.
         # So we check if there's any neutral decay to a component of a multiplet. If there isn't, the whole assignment is invalid.
         
+        # if self.connections(assignment) == False: return False
+        
         gauge_eigenstates = assignment.values()
         multiplets = sorted(gauge_eigenstates, key=lambda g: (g.isospin, g.hypercharge, g.I))
         multiplets = [list(g) for _, g in itertools.groupby(multiplets, key=lambda g: (g.isospin, g.hypercharge, g.I))]
@@ -314,10 +315,11 @@ class MultipletSolver:
         relevant_decay = [decay for decay in self.all_decays if ((decay.p1 == p1 and decay.p2 == p2) or (decay.p1 == p2 and decay.p2 == p1))][0]
         return local_weight(relevant_decay, self.all_decays)
     
-    def connections(self, assignment: Dict[str, GaugeEigenstate]) -> Dict[str, List[GaugeEigenstate]]:
+    def connections(self, assignment: Dict[str, GaugeEigenstate]) -> Dict[str, List[GaugeEigenstate]] | bool:
         """
         Gets an assignment (A dictionary relating mass eigenstate labels to gauge eigenstates)
         and returns, for each mass eigenstate, all the gauge eigenstates that constitute it.
+        EXCEPT if the configuration is deemed invalid, then returns False.
         """
         
         # Begin with the mandatory connections
@@ -325,6 +327,11 @@ class MultipletSolver:
         
         # Then, for each neutral decay, append to the connections
         for decay in self.neutral_decays:
+            # If there's a nonzero branching ratio (a valid neutral decay) and the difference of isospins |j1 - j2| is not half,
+            # this configuration is invalid and should be discarded.
+            # if decay.branching_ratio != 0 and abs(
+            #     assignment[decay.p1.label].isospin - assignment[decay.p2.label].isospin) != Fraction(1,2):
+            #     return False 
             connections[decay.p1.label].append(assignment[decay.p2.label])
             connections[decay.p2.label].append(assignment[decay.p1.label])
             

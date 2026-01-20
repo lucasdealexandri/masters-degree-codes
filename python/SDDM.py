@@ -25,7 +25,7 @@ class SDDM:
         
         # preference for masses in the range of 500 - 2000 GeV
         # Notice the mass term involving ms has a 1/2 term, hence double the range.
-        self.ms = self.rng.uniform(low = 1000.0, high = 4000.0) if ms == None else ms
+        self.ms = self.rng.uniform(low = 2*500.0, high = 2*2000.0) if ms == None else ms
         self.mu = self.rng.uniform(low = 500.0, high = 2000.0) if mu == None else mu
         
         # preference for yukawas in the range 0.01 - 1
