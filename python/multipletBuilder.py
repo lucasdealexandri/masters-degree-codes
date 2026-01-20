@@ -43,7 +43,8 @@ class MassEigenstate:
         return self.__repr__()
     
     def __eq__(self, other): 
-        return (self.mass == other.mass and self.charge == other.charge and self.K == other.K) 
+        return self.label == other.label
+        # return (self.mass == other.mass and self.charge == other.charge and self.K == other.K) 
     
 
 WBOSON = MassEigenstate(MW, 1)
@@ -165,6 +166,9 @@ class MultipletSolver:
         self.neutral_decays = [decay for decay in all_decays if not decay._charged_decay]
         self.all_charges = list(set([p.charge for p in particles]))
     
+    def get_mass_eigenstate(self, label: str) -> MassEigenstate:
+        return [p for p in self.particles if p.label == label][0]
+        
     @property
     def all_partitions(self) -> List[List[int]]:
         """All integers partitions with values up to max_multiplet (the largest possible multiplet)"""
@@ -205,27 +209,7 @@ class MultipletSolver:
                 m = i - j
                 gauge_basis.append(GaugeEigenstate(j,y,I,m))
                 
-        return gauge_basis
-        
-    def check_consistency(self, configuration: List[GaugeEigenstate]):
-        # Main consistency to immediately elliminate configurations is checked
-        # via W. If there is any inconsistencies between the observed decays
-        # and possible decays given the gauge eigenstates, the configuration is discarded.
-        # EXPLAIN THIS BETTER
-        
-        # If there is a charged decay between two particles Chi11 and Chi02,
-        # Then necessarily Chi11 has a connection to a gauge eigenstate from a multiplet
-        # and Chi02 has a connection to the downstairs eigenstate from the same multiplet.
-        
-        # Create a change of basis matrix for each charge
-        # U is such that Chi^q_k = U[q][k, alpha] Psi^q_alpha
-        U = {q: 
-            np.ones((
-                len([p for p in self.particles if p.charge == q]), 
-                len([p for p in self.particles if p.charge == q])
-                )) for q in self.all_charges}
-        
-        return U
+        return gauge_basis  
     
     @property
     def all_configurations(self) -> List[List[GaugeEigenstate]]:
@@ -233,9 +217,9 @@ class MultipletSolver:
     
     def assign_particles(self, normalize_scores: bool=True) -> List[Tuple[float, Dict[str, GaugeEigenstate]]]:
         """
-        Assign mass eigenstates to gauge eigenstates,
-        assuming that each mass eigenstate has a predominant gauge eigenstate
-        associated with it
+        Assuming that each mass eigenstate has a predominant gauge eigenstate associated with it,
+        assigns mass eigenstates to gauge eigenstates for every possible configuration,
+        calculates the associated score of each configuration and returns the scores with the configurations.
         """
         all_possible_assignments = []
         for configuration in self.all_configurations:
@@ -263,13 +247,40 @@ class MultipletSolver:
         # and keep track of max score to normalize.
         scores = [self.calculate_total_score(assignment) for assignment in all_possible_assignments]
         max_score = max(scores) if normalize_scores else 1
-        print(scores)
-        all_possible_assignments_ranked = [(score/max_score, assignment) for score, assignment in zip(scores, all_possible_assignments)]
+        all_possible_assignments_ranked = [
+            (score/max_score, assignment) for score, assignment in zip(scores, all_possible_assignments) if self.check_consistency(assignment)]
         
         # return all_possible_assignments
         return sorted(all_possible_assignments_ranked, key=lambda e: e[0], reverse=True)
+    
+    def check_consistency(self, assignment: Dict[str, GaugeEigenstate]) -> bool:
+        # Check if a given assignment of particles to multiplets makes physical sense
+        
+        # If a singlet participates on a charged decay, it has to have a connection via Higgs to a multiplet.
+        # So we check if there's any neutral decay to a component of a multiplet. If there isn't, the whole assignment is invalid.
+        
+        gauge_eigenstates = assignment.values()
+        multiplets = sorted(gauge_eigenstates, key=lambda g: (g.isospin, g.hypercharge, g.I))
+        multiplets = [list(g) for _, g in itertools.groupby(multiplets, key=lambda g: (g.isospin, g.hypercharge, g.I))]
+        
+        not_singlets = [m for m in multiplets if len(m) > 1]
+        
+        for mass_label, gauge_eigenstate in assignment.items():
+            singlet = gauge_eigenstate.isospin == 0
+            if singlet:
+                # checks if there are charged decays involving it
+                involved_in_charged_decay = any([mass_label in (decay.p1.label, decay.p2.label) for decay in self.charged_decays])
                 
-    def calculate_total_score(self, assignment: Dict):
+                # check if there are neutral decays involving it and a member of a multiplet
+                involved_in_neutral_decay_with_multiplet = any(
+                    [mass_label in (decay.p1.label, decay.p2.label) for decay in self.neutral_decays if any(
+                        [g in multiplet for g in (assignment[decay.p1.label], assignment[decay.p2.label]) for multiplet in not_singlets])])
+                
+                if involved_in_charged_decay and not involved_in_neutral_decay_with_multiplet: return False
+                
+        return True
+        
+    def calculate_total_score(self, assignment: Dict[str, GaugeEigenstate]):
         """
         Locates particles in multiplets and calculates the score of their decays
         """
@@ -290,7 +301,7 @@ class MultipletSolver:
                 # Find the mass eigenstate from the dictionary
                 mass_label = [key for key, val in assignment.items() if val == gauge_eigenstate][0]
                 # Get the MassEigenstate object
-                mass_eigenstate = [p for p in self.particles if p.label == mass_label][0]
+                mass_eigenstate = self.get_mass_eigenstate(mass_label)
                 mass_eigenstates.append(mass_eigenstate)
             
             # Sum for each multiplet the adjacent-pair sum of the weight of decay channels 
@@ -302,20 +313,37 @@ class MultipletSolver:
     def calculate_weight(self, p1: MassEigenstate, p2: MassEigenstate):
         relevant_decay = [decay for decay in self.all_decays if ((decay.p1 == p1 and decay.p2 == p2) or (decay.p1 == p2 and decay.p2 == p1))][0]
         return local_weight(relevant_decay, self.all_decays)
+    
+    def connections(self, assignment: Dict[str, GaugeEigenstate]) -> Dict[str, List[GaugeEigenstate]]:
+        """
+        Gets an assignment (A dictionary relating mass eigenstate labels to gauge eigenstates)
+        and returns, for each mass eigenstate, all the gauge eigenstates that constitute it.
+        """
+        
+        # Begin with the mandatory connections
+        connections = {mass_label: [gauge_eigenstate] for mass_label, gauge_eigenstate in assignment.items()}
+        
+        # Then, for each neutral decay, append to the connections
+        for decay in self.neutral_decays:
+            connections[decay.p1.label].append(assignment[decay.p2.label])
+            connections[decay.p2.label].append(assignment[decay.p1.label])
+            
+        return connections
+            
         
 
-class SU2Multiplet(list):
-    # An SU(2) Multiplet is a list of gauge eigenstates
-    def __init__(self, initial_multiplet: List[GaugeEigenstate] = None):
-        super().__init__()
+# class SU2Multiplet(list):
+#     # An SU(2) Multiplet is a list of gauge eigenstates
+#     def __init__(self, initial_multiplet: List[GaugeEigenstate] = None):
+#         super().__init__()
     
-    # The isospin of an N-plet is given by 1/2 (N - 1)    
-    @property
-    def isospin(self): return Fraction(1,2)*(len(self) - 1)
+#     # The isospin of an N-plet is given by 1/2 (N - 1)    
+#     @property
+#     def isospin(self): return Fraction(1,2)*(len(self) - 1)
     
-    # This likely won't stay for long
-    @property
-    def hypercharge(self): return self.initial_multiplet[0].hypercharge
+#     # This likely won't stay for long
+#     @property
+#     def hypercharge(self): return self.initial_multiplet[0].hypercharge
 
 
 if __name__ == "__main__":
@@ -350,7 +378,10 @@ if __name__ == "__main__":
     # print(solver.construct_configuration([2,1,1,1]))
     # print(solver.check_consistency(1))
     # print(solver.all_configurations)
-    print(solver.assign_particles(normalize_scores=False))
+    
+    # For the SDDM the configurations are duplicated since we have two doublets.
+    for assignment in solver.assign_particles():
+        print(assignment)
     print(len(solver.assign_particles()))
     # print(list(itertools.permutations(solver.all_configurations[0])))
 
