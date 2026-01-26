@@ -1,404 +1,561 @@
 import itertools
-import numpy as np
+from typing import List, Set, Tuple, Dict
 from fractions import Fraction
-from more_itertools import consecutive_groups
-from typing import List, Set, Generator, Dict, Tuple
+# We use UserDict instead of inheriting from dict for more predictable behavior
+# See, e.g., https://treyhunner.com/2019/04/why-you-shouldnt-inherit-from-list-and-dict-in-python/
+from collections import UserDict, defaultdict
 
-MW = 79.8244 # GeV. Value from MH // NumericalValue in FeynRules (SM.fr)
-MH = 125 # GeV. Value from SM.fr
 
-gw = 0.648397 # Weak coupling constant. Value from gw // NumericalValue in FeynRules (SM.fr)
-
-def integer_partitions(n: int, max_val: int = None) -> Generator:
-    """
-    Find all integer partitions of the number n with values up to max_n
-    Example: integer_partitions(5, 2) returns [[2, 2, 1], [2, 1, 1, 1], [1, 1, 1, 1, 1]]
-    """
-    # Default value of max_n = n.
-    if max_val == None: max_val = n
-    if n == 0:
-        yield []
-        return 
+class Particle:
     
-    for i in range(min(max_val, n), 0, -1):
-        for partition in integer_partitions(n - i, i):
-            yield [i] + partition 
-
-
-class MassEigenstate:
-    # A mass eigenstate is defined by its mass and its charge. (In the future SU(3) indices will be added as well)
-    # There is a third index, K, for disambiguation. This will be automatically assigned for particles with the same
-    # mass and charge. The user must be careful not to enter the same particle twice.
-    def __init__(self, mass: float, charge: float | Fraction, K: int = 0):
-        self.label = f"Chi{charge}{K}"
-        self.mass = mass
+    def __init__(self, label: str, spin: int | Fraction, color: int, charge: int | Fraction, mass: float):
+        self.label = label
+        self.spin = spin
+        self.color = color
         self.charge = charge
-        self.K = K
-    
-    def __repr__(self):
-        return f"Mass eigenstate (m, q, K) = ({self.mass:.2f}, {self.charge}, {self.K})"
-    
-    def __str__(self): 
-        return self.__repr__()
-    
-    def __eq__(self, other): 
-        return self.label == other.label
-        # return (self.mass == other.mass and self.charge == other.charge and self.K == other.K) 
-    
-
-WBOSON = MassEigenstate(MW, 1)
-HIGGS = MassEigenstate(MH, 0)
-
-
-class DecayChannel:
-    
-    def __init__(self, p1: MassEigenstate, p2: MassEigenstate, branching_ratio: float):
-        self.p1 = p1
-        self.p2 = p2
-        self.branching_ratio = branching_ratio
-        assert int(abs(p1.charge - p2.charge)) in (0,1), "Invalid charge difference between particles 1 and 2."
-        # We are only considering decays to H and W. Charged decay => W, Neutral => H.
-        self._charged_decay = int(abs(p1.charge - p2.charge)) == 1
-        self.boson = WBOSON if self._charged_decay else HIGGS
-    
-    @property  
-    def phase_space_term(self):
+        self.mass = mass
         
-        mi = max(self.p1.mass, self.p2.mass)
-        mj = min(self.p1.mass, self.p2.mass)
+        self.unbroken_qns = (spin, color, charge)
         
-        # Magnitude of 3 momentum https://pdg.lbl.gov/2017/reviews/rpp2017-rev-kinematics.pdf
-        # We use mH = mW = 0 because our actual final state does not involve H and W, but rather quarks and fermions
-        p1 = (mi**2-mj**2) / (2*mi)
-        
-        # Everything that is not U^{-1}.T.U (SU(2) group factor in mass basis) in the decay width for the charged decay
-        # Γ = φ(mi, mj, mW) (U^{-1}.T.U)^2. phase_space_term is φ(mi, mj, mW).
-        if self._charged_decay:
-            # Calculated in FeynCalc (FeynCalc1To2FermionWDecay.nb)
-            numerator = gw**2 * (mi-mj-MW)*(mi-mj+MW)*((mi+mj)**2 + 2*MW**2)*p1
-            denominator = 16*np.pi * mi**2 * MW**2
-            return numerator / denominator
-        
-        # In case this is a decay to the Higgs, 
-        # Γ = φH(mi, mj, mW) (U^{-1}.Λ.U)^2, where Λ are the Yukawas times the Clebsh-Gordan coefficients
-        else:
-            # Calculated in FeynCalc (FeynCalc1To2FermionHDecay.nb)
-            numerator = ((mi+mj)**2 - MH**2) * p1
-            denominator = 8*np.pi * mi**2
-            return numerator / denominator
-        
-    # BR mod phase space, i.e., 
-    # its (U^{-1}.Λ.U)^2 / ΓTot for the neutral decay or (U^{-1}.T.U)^2 / ΓTot for the charged one.
-    @property
-    def modified_branching_ratio(self):
-        return self.branching_ratio / self.phase_space_term
     
     def __eq__(self, other):
-        # Two decays are the same if they involve the same particles and have the same branching ratios.
-        # Ideally I'll add a __hash__ method later on to be able to check like {self.p1, self.p2} == {other.p1, other.p2}
-        same_particles = (self.p1 == other.p1 and self.p2 == other.p2) or (self.p1 == other.p2 and self.p2 == other.p1)
-        same_br = self.branching_ratio == other.branching_ratio
+        same_label = self.label == other.label
+        same_spin = self.spin == other.spin
+        same_color = self.color == other.color
+        same_charge = self.charge == other.charge
+        # Maybe be a little tolerant on slightly different masses?
+        same_mass = self.mass == other.mass
         
-        return same_particles and same_br
+        # dont use mass check for now.
+        return same_label and same_spin and same_color and same_charge
+    
+    
+    def __ne__(self, other):
+        return not self.__eq__(other)
+        
+        
+    def __hash__(self):
+        return hash((self.label, self.spin, self.color, self.charge))
+        
     
     def __repr__(self):
-        more_massive_particle = max(self.p1, self.p2, key=lambda p: p.mass)
-        less_massive_particle = min(self.p1, self.p2, key=lambda p: p.mass)
-        boson = "W" if self._charged_decay else "H"
-        return f"{more_massive_particle.label} -> {less_massive_particle.label} + {boson}"
-
-
-def mod_braching_fraction(decay: DecayChannel, all_decays: List[DecayChannel]):
+        return self.label
+    
+    
+    def __str__(self):
+        return self.__repr__()
+    
+    
+class DecayChannel:
+    
+    def __init__(self, p1: Particle, p2: Particle):
+        self.p1 = p1
+        self.p2 = p2
         
-    numerator = decay.modified_branching_ratio
-    denominator = 0
-    most_massive_particle = max([decay.p1, decay.p2], key=lambda p: p.mass)
-    # If the most massive particle of the decay of interest is the same as
-    # the most massive particle in other decays, then append the mBR of the other decay to the denominator.
-    for d in all_decays:
-        if most_massive_particle == max([d.p1, d.p2], key=lambda p: p.mass):
-            denominator += d.modified_branching_ratio
-
-    return numerator / denominator
-
-
-def local_weight(decay: DecayChannel, all_decays: List[DecayChannel]):
-    
-    m1 = decay.p1.mass
-    m2 = decay.p2.mass
-    
-    bf = mod_braching_fraction(decay, all_decays)
-    return float(np.sqrt(bf * min(m1 / m2, m2 / m1))) 
-
-
-class GaugeEigenstate:
-    
-    # The disambiguation index I is automatically assigned.
-    # Initially, we assume to know nothing about a given gauge eigenstate. The quantum numbers will be inherited from
-    # the multiplet they are contained.
-    def __init__(self, 
-                 isospin: int | Fraction = None, 
-                 hypercharge: int | Fraction = None, 
-                 I: int = 0,
-                 isospin_projection: int | Fraction = None):
+        self.most_massive = max(p1, p2, key = lambda p: p.mass)
+        self.least_massive = min(p1, p2, key = lambda p: p.mass)
         
+        # Assert the charge difference between the particles is 0 or 1. Different values are not supported.
+        assert abs(p1.charge - p2.charge) in (0, 1), f"The charge difference must be of 0 or 1. |q1 - q2| = {abs(p1.charge - p2.charge)}"
+        self.charged_decay = abs(p1.charge - p2.charge) == 1
+        self.neutral_decay = not self.charged_decay
+       
+        # Identify which boson is included in the decay. Currently only W and H are supported. 
+        self.boson = "W" if self.charged_decay else "H"
+        
+    
+    def __eq__(self, other):
+        same_particles = self.most_massive == other.most_massive and self.least_massive == other.least_massive
+        
+        return same_particles
+        
+        
+    def __ne__(self, other):
+        return not self.__eq__(other)
+        
+    
+    def __repr__(self):
+        return f"{self.most_massive.label} -> {self.least_massive} + {self.boson}"
+    
+    
+    def __str__(self):
+        return self.__repr__()
+    
+    
+class Multiplet:
+    
+    def __init__(self, spin: int | Fraction, color: int, isospin: int | Fraction, hypercharge: int | Fraction, I: int):
+        self.spin = spin
+        self.color = color
         self.isospin = isospin
         self.hypercharge = hypercharge
         self.I = I
+        
+        self.dimension = int(2*isospin + 1)
+
+        self._regular_names = {1: "Singlet", 2: "Doublet", 3: "Triplet", 4: "Quartet", 5: "Quintet"}
+        
+        if self.dimension in self._regular_names.keys():
+            self._multiplet_name = self._regular_names[self.dimension]
+            
+        else: self._multiplet_name = f"{self.dimension}-plet"
+        
+        
+    @property
+    def flavor_eigenstates(self):
+        return [FlavorEigenstate(self, -self.isospin + i) for i in range(self.dimension)]
+    
+    
+    def __len__(self):
+        return self.dimension
+    
+    
+    def __eq__(self, other):
+        same_spin = self.spin == other.spin
+        same_color = self.color == other.color
+        same_isospin = self.isospin == other.isospin
+        same_hypercharge = self.hypercharge == other.hypercharge
+        same_I = self.I == other.I
+        return same_spin and same_color and same_hypercharge and same_isospin and same_I
+    
+    
+    def __ne__(self, other):
+        return not self.__eq__(other)
+    
+    
+    def __hash__(self):
+        return hash((self.spin, self.color, self.isospin, self.hypercharge, self.I))
+    
+    
+    def __repr__(self):
+        return f"SU(2) {self._multiplet_name} ({self.spin}, {self.color}; {self.isospin}, {self.hypercharge}, {self.I})"
+    
+    
+    def __str__(self):
+        return self.__repr__()
+    
+    
+class FlavorEigenstate(Multiplet):
+    
+    def __init__(self, multiplet: Multiplet, isospin_projection: int | Fraction):
+        super().__init__(multiplet.spin, multiplet.color, multiplet.isospin, multiplet.hypercharge, multiplet.I)
         self.isospin_projection = isospin_projection
-        self.charge = hypercharge + isospin_projection
-        self.label = f"({isospin}, {hypercharge}, {I}, {isospin_projection})"
+        
+        self.parent_multiplet = multiplet
+        self.charge = self.hypercharge + self.isospin_projection
+        
+        
+    def __eq__(self, other):
+        same_multiplet = self.parent_multiplet == other.parent_multiplet
+        same_projection = self.isospin_projection == other.isospin_projection
+        
+        return same_multiplet and same_projection
+    
+    
+    def __ne__(self, other):
+        return not self.__eq__(other)
+    
+    
+    def __hash__(self):
+        return hash((
+            self.spin, 
+            self.color, 
+            self.isospin, 
+            self.hypercharge, 
+            self.I, 
+            self.isospin_projection
+            ))
+        
+        
+    def __iter__(self):
+        yield self
+    
         
     def __repr__(self):
-        # (j, y, I, m)
+        # return f"({self.spin}, {self.color}; {self.isospin}, {self.hypercharge}, {self.I}, {self.isospin_projection}) from SU(2) {self.parent_multiplet._multiplet_name}"
         return f"({self.isospin}, {self.hypercharge}, {self.I}, {self.isospin_projection})"
+        
+        
+    def __str__(self):
+        return self.__repr__()
+        
+
+class ParticleAssignment(UserDict):
+    """
+    Bidirectional One to Many Dictionary relating MassEigenstates to FlavorEigenstates.
+    Just a normal dictionary with a inverse() method.
+    """
+    def __init__(self, *args, **kwargs):
+        super().__init__(*args, **kwargs)
+        
     
-    def __str__(self): return self.__repr__()
+    def __setitem__(self, key, value):
+        if not isinstance(value, set):
+            value = set(value)
+        super().__setitem__(key, value)
+        
+    
+    def __delitem__(self, key):
+        super().__delitem__(key)
+    
+        
+    def __repr__(self):
+        return super().__repr__()
+    
+   
+    @property 
+    def inverse(self):
+        
+        inv_map = {}
+        
+        for mass_eigentate, flavor_eigenstates in self.data.items():
+            
+            for flavor_eigenstate in flavor_eigenstates:
+                
+                if flavor_eigenstate not in inv_map: 
+                    inv_map[flavor_eigenstate] = set()
+                
+                inv_map[flavor_eigenstate].add(mass_eigentate)
+
+        return inv_map
+    
+class Model:
+    
+    def __init__(self, multiplets: List[Multiplet]):
+        self.multiplets = multiplets
+        
+        
+    def generate_initial_mappings(self, particles: List[Particle]) -> List[ParticleAssignment]:
+        """
+        Returns a list of all possible ways of mapping a mass eigenstate to a single flavor eigenstate
+        """
+        
+        flavor_eigenstates = sorted(
+            [fe for m in self.multiplets for fe in m.flavor_eigenstates], key=lambda f: f.isospin_projection)
+        
+        # 1. Separate in (spin, color, charge) to avoid doing more permutations than necessary
+        spincolorcharges = set((p.spin, p.color, p.charge) for p in particles)
+        
+        possible_1to1s = []
+        
+        for spincolorcharge in spincolorcharges:
+            
+            grouped_particles = [p for p in particles if (p.spin, p.color, p.charge) == spincolorcharge]
+            grouped_flavor_eigenstates = [fe for fe in flavor_eigenstates if (fe.spin, fe.color, fe.charge) == spincolorcharge]
+            permutations = itertools.permutations(grouped_flavor_eigenstates)
+            
+            # All permutations of ways to relate the mass eigenstates to the flavor eigenstates
+            possible_assignment = [ParticleAssignment(
+                {p: fe for p, fe in zip(grouped_particles, permutation)}) for permutation in permutations]
+            
+            possible_1to1s.append(possible_assignment)
+        
+        # 2. Cartesian product of the assignments of different unbroken QNs
+        all_possible_1to1s = [
+            ParticleAssignment({k: v for d in combo for k, v in d.items()}) for combo in itertools.product(*possible_1to1s)]
+            
+        return all_possible_1to1s
     
     
-class MultipletSolver:
+    def build_connections(self, assignment: ParticleAssignment, all_decays: List[DecayChannel]):
+        """
+        Uses the neutral decays to determine all the connections between mass and flavor eigenstates.
+        """
+        
+        final_assignment = ParticleAssignment({p: f for p, f in assignment.items()})
+        neutral_decays = [decay for decay in all_decays if decay.neutral_decay]
+        
+        for decay in neutral_decays:
+            final_assignment[decay.p1].update(assignment[decay.p2])
+            final_assignment[decay.p2].update(assignment[decay.p1])
+            
+        return final_assignment
     
-    def __init__(self, particles: List[MassEigenstate], all_decays: List[DecayChannel]):
+    
+    def consistent(self, assignment: ParticleAssignment, all_decays: List[DecayChannel], where_failed: bool = False):
+        """
+        For a given assignment to be deemed consistent, the following checks need to be True:
+        
+        1. Mandatory Charged Decay Check: For every multiplet, if two flavor eigenstates differ in charge
+        by one, a charged decay must exist between them. Therefore, the corresponding mass 
+        eigenstates must also be linked by this decay.
+        
+        2. Forbidden Charged Decay Check: If there is a charged decay between two mass eigenstates,
+        check if each is assigned to AT LEAST ONE flavor eigenstate from the same multiplet. 
+        If the answer negative, then the configuration is invalid.
+        
+        3. Isospin Check: There can only be a valid neutral decay between two mass eigenstates
+        if each mass eigenstate has AT LEAST ONE flavor eigenstate that differs from
+        AT LEAST ONE flavor eigenstate connected to the other mass eigenstate by 1/2 in isospin 
+        """
+        
+        # 1. Mandatory Charged Decay Check
+        # Note for future: This might be too stringent. If even ONE decay does not appear in the
+        # list all_decays, then this is considered inconsistent. Could it be the case that one
+        # does not see the decay channel because it is very small? Then, how to loosen up this 
+        # condition a bit? Maybe consider if any of the decay happens, or "most".
+        for multiplet in self.multiplets:
+            for f1, f2 in itertools.pairwise(multiplet.flavor_eigenstates):
+                for p1, p2 in itertools.product(assignment.inverse[f1], assignment.inverse[f2]):
+                    if DecayChannel(p1, p2) not in all_decays: 
+                        return False
+                    
+        # 2. Forbidden Charged Decay
+        charged_decays = [decay for decay in all_decays if decay.charged_decay]
+        
+        charged_violations = []
+        
+        for decay in charged_decays:
+            
+            charged_violation = True
+            
+            p1, p2 = (decay.p1, decay.p2)
+            
+            for f1, f2 in itertools.product(assignment[p1], assignment[p2]):
+                # If at least one flavor eigenstate from one particle belongs to at least one 
+                # flavor eigenstate from the other, then there is no charged violation.
+                if f1.parent_multiplet == f2.parent_multiplet: charged_violation = False
+            
+            charged_violations.append(charged_violation)    
+        
+        if any(charged_violations): return False        
+                    
+        # 3. Isospin Check
+        # Note: Need to be strict with the type allowed in isospins for FlavorEigenstates,
+        # Always Fractions, otherwise this will not work.
+        neutral_decays = [decay for decay in all_decays if decay.neutral_decay]
+        
+        neutral_violations = []
+        
+        for decay in neutral_decays:
+            
+            neutral_violation = True
+            
+            p1, p2 = (decay.p1, decay.p2)
+            
+            for f1, f2 in itertools.product(assignment[p1], assignment[p2]):
+                
+                if abs(f1.isospin - f2.isospin) == Fraction(1,2): neutral_violation = False
+                
+            neutral_violations.append(neutral_violation)
+        
+        if any(neutral_violations): return False
+        
+        return True
+            
+        
+    def all_valid_assignments(self, particles: List[Particle], all_decays: List[DecayChannel], where_failed: bool = False):
+       
+        assignments: List[ParticleAssignment] = []
+        
+        # 1. Find all possible 1 to 1 connections between MassEigenstates and FlavorEigenstates. 
+        initial_assignments: List[ParticleAssignment] = self.generate_initial_mappings(particles)
+        
+        # 2. Find the rest of the connections using neutral decays
+        for assignment in initial_assignments:
+            assignment = self.build_connections(assignment, all_decays)
+        
+        # 3. Use consistency checks to eliminate certain assignments
+        for assignment in initial_assignments:
+            if self.consistent(assignment, all_decays, where_failed):
+                assignments.append(assignment)
+        
+        # 4. Remove duplicates.
+        # Could perhaps go a step further and classify assignments as equal if they end up generating the same model
+        # e.g., if only the index I changes between different multiplets, a renaming of particles is completely equivalent.
+        unique_assignments: List[ParticleAssignment] = []
+        for a in assignments:
+            if a not in unique_assignments:
+                unique_assignments.append(a)
+        
+        return unique_assignments
+    
+    
+    def __getitem__(self, index):
+        return self.multiplets[index]
+    
+    
+    def __eq__(self, other):
+        return set(self.multiplets) == set(other.multiplets)
+    
+    
+    def __hash__(self):
+        return hash(frozenset(self.multiplets))
+    
+    
+    def __repr__(self):
+        return f"{tuple(sorted([m.dimension for m in self.multiplets], reverse=True))}"
+    
+
+class ModelsBuilder:
+    
+    def __init__(self, particles: List[Particle], all_decays: List[DecayChannel]):
         self.particles = particles
         self.all_decays = all_decays
-        self.charged_decays = [decay for decay in all_decays if decay._charged_decay]
-        self.neutral_decays = [decay for decay in all_decays if not decay._charged_decay]
-        self.all_charges = list(set([p.charge for p in particles]))
-    
-    def get_mass_eigenstate(self, label: str) -> MassEigenstate:
-        return [p for p in self.particles if p.label == label][0]
         
-    @property
-    def all_partitions(self) -> List[List[int]]:
-        """All integers partitions with values up to max_multiplet (the largest possible multiplet)"""
-        # This is the length of the largest consecutive sublist of charges. Example:
-        # if the charges were [-10, -9, -8, 5, 6, 7, 8], the largest consecutive sublist is [5, 6, 7, 8],
-        # thus max_multiplet would be 4 (a quartet).
-        max_multiplet = max([len(list(group)) for group in consecutive_groups(self.all_charges)])
-        partitions = list(integer_partitions(len(self.particles), max_multiplet))
-        # If there is any connection to the W boson (charged decay), the configuration of all singlets
-        # is not reasonable, so it is removed.
-        if any([decay._charged_decay for decay in self.all_decays]):
-            partitions.pop()
+        # Unbroken quantum numbers are spin, color, and charge: (s, c, q).
+        self.unbroken_qns = [(p.spin, p.color, p.charge) for p in particles]
+        
+        self.grouped_spincolor: defaultdict = defaultdict(list)
+        for spin, color, charge in self.unbroken_qns:
+            self.grouped_spincolor[(spin, color)].append(charge)
+        
+        
+    def valid_charge_partitions(self, charges: List[int]) -> Set[Tuple[Tuple[int]]]:
+        """
+        Returns all valid charge partitions given a list of charges
+        Example: charges = valid_charge_partitions([0, 0, 0, 1, 1])
+        returns {
+            ((0,), (0,), (0,), (1,), (1,)), 
+            ((0,), (0,), (0, 1), (1,)), 
+            ((0,), (0, 1), (0, 1))}
+        """
+        # In case they do not come sorted
+        charges = sorted(charges)
+        
+        partitions = set()
+        n = len(charges)
+        
+        def backtrack(index: int, current_partition: List[List[int]]):
+            
+            if index == n:
+                frozen_partition: Tuple[Tuple[int]] = tuple(sorted(tuple(chain) for chain in current_partition))
+                
+                partitions.add(frozen_partition)
+                
+                return
+            
+            charge = charges[index]
+            
+            for chain in current_partition:
+                if abs(chain[-1] - charge) == 1 and charge not in chain:
+                    
+                    chain.append(charge)
+                    backtrack(index + 1, current_partition)
+                    
+                    chain.pop()
+                    
+            current_partition.append([charge])
+            
+            backtrack(index + 1, current_partition)
+            
+            current_partition.pop()
+            
+        backtrack(0, [])
+        
         return partitions
-        
-    def construct_configuration(self, partition: List[int]) -> List[GaugeEigenstate]:
-        """
-        Based on the partition, constructs GaugeEigenstates.
-        This is the configuration for one partition.
-        """
-        # I need a better way to think about how to fit charges to the multiplets...
-        # So far, a naive method is implemented.
-        gauge_basis = []
-        charges = sorted([p.charge for p in self.particles], reverse=True)
-        multiplets = []
-        for n_multiplet in partition:
-            I = 0
-            # Starts from largest multiplet, places smallest charge on the bottom.
-            j = Fraction(n_multiplet - 1, 2)
-            # q = y + m => y = q - m. The smallest charge is at the bottom of the multiplet, where m = -j.
-            y = charges[-1] + j
-            charges.pop()
-            # Update the desambiguation index I. For each different multiplet with
-            # the same quantum numbers j and y, increase I by one.
-            while (j, y, I) in multiplets:
-                I += 1
-            multiplets.append((j, y, I))
-            for i in range(n_multiplet):
-                m = i - j
-                gauge_basis.append(GaugeEigenstate(j,y,I,m))
-                
-        return gauge_basis  
+    
     
     @property
-    def all_configurations(self) -> List[List[GaugeEigenstate]]:
-        return [self.construct_configuration(partition) for partition in self.all_partitions]
-    
-    def assign_particles(self, normalize_scores: bool=True) -> List[Tuple[float, Dict[str, GaugeEigenstate]]]:
+    def all_valid_partitions(self) -> defaultdict:
         """
-        Assuming that each mass eigenstate has a predominant gauge eigenstate associated with it,
-        assigns mass eigenstates to gauge eigenstates for every possible configuration,
-        calculates the associated score of each configuration and returns the scores with the configurations.
+        Calculates valid_charge_partitions for each (spin, color) combination from the input.
+        returns {(spin1, color1): charge_partitions1, (spin2, color2): charge_partitions2], ...}
         """
-        all_possible_assignments = []
-        for configuration in self.all_configurations:
-            # What are all possible assignments for each configuration (list of multiplets)?
-            possible_assignments = []
+        all_partitions = defaultdict(list)
             
-            # Separate in charges to avoid doing more permutations than necessary
-            for charge in self.all_charges:
-                particles = [particle for particle in self.particles if particle.charge == charge]
-                permutations = itertools.permutations([g for g in configuration if g.charge == charge])
+        for spincolor, charges in self.grouped_spincolor.items():
+            all_partitions[spincolor] = self.valid_charge_partitions(charges)
+            
+        return all_partitions
+    
+    
+    def assign_model(self, spin: int | Fraction, color: int, charge_partitions: Tuple[Tuple[int]]) -> Model:
+        """
+        A charge partition has a 1 to 1 correspondence to a Model.
+        Given something like ((0,), (0, 1), (0, 1)) one can spot one SU(2) singlet and two SU(2) doublets,
+        as well as their hypercharges.
+        """
+        
+        multiplets: List[Multiplet] = []
+        
+        for partition in charge_partitions:
+            
+            I: int = 0
+            
+            dimension: int = len(partition)
+            isospin: Fraction = Fraction(dimension - 1, 2)
+            
+            smallest_charge: int | Fraction = min(partition)
+            # isospin projection m for the smallest charge is m = -j.
+            # since we are using q = y + m => y = q - m, y = q_min + j.
+            hypercharge: int | Fraction = smallest_charge + isospin
+            
+            # Update I until it is unique
+            while Multiplet(spin, color, isospin, hypercharge, I) in multiplets:
+                I += 1
                 
-                # All permutations of ways to relate the mass eigenstates to the gauge eigenstates
-                possible_assignment = [
-                    {p.label: g for p,g in zip(particles, perm)} for perm in permutations]
-                possible_assignments.append(possible_assignment)
-
-            # Cartesian product of the assignments of different charges
-            all_possible_assignments.append(
-                [{k: v for d in combo for k, v in d.items()} for combo in itertools.product(*possible_assignments)])
+            multiplets.append(Multiplet(spin, color, isospin, hypercharge, I))
         
-         # Flatten the list
-        all_possible_assignments = list(itertools.chain(*all_possible_assignments))
+        model = Model(multiplets)    
         
-        # For each possible assignment, calculate the total score
-        # and keep track of max score to normalize.
-        scores = [self.calculate_total_score(assignment) for assignment in all_possible_assignments]
-        max_score = max(scores) if normalize_scores else 1
-        all_possible_assignments_ranked = [
-            (score/max_score, assignment) for score, assignment in zip(scores, all_possible_assignments) if self.check_consistency(assignment)]
+        if model.all_valid_assignments(self.particles, self.all_decays): return model
         
-        # return all_possible_assignments
-        return sorted(all_possible_assignments_ranked, key=lambda e: e[0], reverse=True)
-    
-    def check_consistency(self, assignment: Dict[str, GaugeEigenstate]) -> bool:
-        # Check if a given assignment of particles to multiplets makes physical sense
         
-        # If a singlet participates on a charged decay, it has to have a connection via Higgs to a multiplet.
-        # So we check if there's any neutral decay to a component of a multiplet. If there isn't, the whole assignment is invalid.
+    @property    
+    def all_valid_models(self) -> List[Model]:
         
-        # if self.connections(assignment) == False: return False
-        
-        gauge_eigenstates = assignment.values()
-        multiplets = sorted(gauge_eigenstates, key=lambda g: (g.isospin, g.hypercharge, g.I))
-        multiplets = [list(g) for _, g in itertools.groupby(multiplets, key=lambda g: (g.isospin, g.hypercharge, g.I))]
-        
-        not_singlets = [m for m in multiplets if len(m) > 1]
-        
-        for mass_label, gauge_eigenstate in assignment.items():
-            singlet = gauge_eigenstate.isospin == 0
-            if singlet:
-                # checks if there are charged decays involving it
-                involved_in_charged_decay = any([mass_label in (decay.p1.label, decay.p2.label) for decay in self.charged_decays])
-                
-                # check if there are neutral decays involving it and a member of a multiplet
-                involved_in_neutral_decay_with_multiplet = any(
-                    [mass_label in (decay.p1.label, decay.p2.label) for decay in self.neutral_decays if any(
-                        [g in multiplet for g in (assignment[decay.p1.label], assignment[decay.p2.label]) for multiplet in not_singlets])])
-                
-                if involved_in_charged_decay and not involved_in_neutral_decay_with_multiplet: return False
-                
-        return True
-        
-    def calculate_total_score(self, assignment: Dict[str, GaugeEigenstate]):
-        """
-        Locates particles in multiplets and calculates the score of their decays
-        """
-        gauge_eigenstates = assignment.values()
-        
-        # Locate particles gauge eigenstates that are in the same multiplet and separate them in lists
-        multiplets = sorted(gauge_eigenstates, key=lambda g: (g.isospin, g.hypercharge, g.I))
-        multiplets = [list(g) for _, g in itertools.groupby(multiplets, key=lambda g: (g.isospin, g.hypercharge, g.I))]
-        
-        # Now, for each multiplet, locate the particle that is assigned to each gauge eigenstate
-        # and calculate the score of the decay
-        total_score = 0
-        for multiplet in multiplets:
-            # Sort the multiplets by m so that charges go up by one always.
-            multiplet = sorted(multiplet, key=lambda m: m.isospin_projection)
-            mass_eigenstates = []
-            for gauge_eigenstate in multiplet:
-                # Find the mass eigenstate from the dictionary
-                mass_label = [key for key, val in assignment.items() if val == gauge_eigenstate][0]
-                # Get the MassEigenstate object
-                mass_eigenstate = self.get_mass_eigenstate(mass_label)
-                mass_eigenstates.append(mass_eigenstate)
+        models: List[Model] = []
+        for spincolor, partitions in self.all_valid_partitions.items():
+            spin, color = spincolor
+            models += [self.assign_model(spin, color, partition) for partition in partitions]
             
-            # Sum for each multiplet the adjacent-pair sum of the weight of decay channels 
-            total_score += sum(
-                self.calculate_weight(p1, p2) for p1, p2 in zip(mass_eigenstates, mass_eigenstates[1:]))
-            
-        return total_score
-    
-    def calculate_weight(self, p1: MassEigenstate, p2: MassEigenstate):
-        relevant_decay = [decay for decay in self.all_decays if ((decay.p1 == p1 and decay.p2 == p2) or (decay.p1 == p2 and decay.p2 == p1))][0]
-        return local_weight(relevant_decay, self.all_decays)
-    
-    def connections(self, assignment: Dict[str, GaugeEigenstate]) -> Dict[str, List[GaugeEigenstate]] | bool:
-        """
-        Gets an assignment (A dictionary relating mass eigenstate labels to gauge eigenstates)
-        and returns, for each mass eigenstate, all the gauge eigenstates that constitute it.
-        EXCEPT if the configuration is deemed invalid, then returns False.
-        """
+        # filter out invalid models.
+        models = [model for model in models if model is not None]
         
-        # Begin with the mandatory connections
-        connections = {mass_label: [gauge_eigenstate] for mass_label, gauge_eigenstate in assignment.items()}
-        
-        # Then, for each neutral decay, append to the connections
-        for decay in self.neutral_decays:
-            # If there's a nonzero branching ratio (a valid neutral decay) and the difference of isospins |j1 - j2| is not half,
-            # this configuration is invalid and should be discarded.
-            # if decay.branching_ratio != 0 and abs(
-            #     assignment[decay.p1.label].isospin - assignment[decay.p2.label].isospin) != Fraction(1,2):
-            #     return False 
-            connections[decay.p1.label].append(assignment[decay.p2.label])
-            connections[decay.p2.label].append(assignment[decay.p1.label])
-            
-        return connections
-            
-        
-
-# class SU2Multiplet(list):
-#     # An SU(2) Multiplet is a list of gauge eigenstates
-#     def __init__(self, initial_multiplet: List[GaugeEigenstate] = None):
-#         super().__init__()
+        return models
     
-#     # The isospin of an N-plet is given by 1/2 (N - 1)    
-#     @property
-#     def isospin(self): return Fraction(1,2)*(len(self) - 1)
     
-#     # This likely won't stay for long
-#     @property
-#     def hypercharge(self): return self.initial_multiplet[0].hypercharge
-
-
+    @property
+    def all_valid_assignments(self) -> Dict[Model, List[ParticleAssignment]]:
+        
+        valid_assignments = {}
+        
+        for model in self.all_valid_models:
+            valid_assignments[model] = model.all_valid_assignments(self.particles, self.all_decays)
+            
+        return valid_assignments
+        
+    
+    
 if __name__ == "__main__":
     
     particles = [
-        MassEigenstate(mass, charge, K) for mass, charge, K in zip(
-            (794.3262972602188, 1200.303231104628, 1205.9769338444082, 1200.0, 1200.0),
-            (0, 0, 0, 1, 1),
-            (0, 1, 2, 1, 2)
+    Particle(label, Fraction(1,2), 1, charge, mass) for label, charge, mass in zip(
+        "Chi00 Chi01 Chi02 Chi11 Chi12".split(),
+        [0, 0, 0, 1, 1],
+        [780.0, 1200.2, 1200.5, 1200.0, 1200.0]
     )]
     
-    # Values from FeynRules considering MH = MW = 0.
-    all_decays = [
-        DecayChannel(p1, p2, br) for (p1, p2, br) in [
-            (particles[0], particles[1], 0.928414),
-            (particles[0], particles[2], 0.335743),
-            (particles[1], particles[2], 0.0000449535),
-            (particles[0], particles[2 + 1], 1.0),
-            (particles[0], particles[2 + 2], 1.0),
-            (particles[1], particles[2 + 1], -0.0547852),
-            (particles[1], particles[2 + 2], -3.49735e-9),
-            (particles[2], particles[2 + 1], -1.59078e-7),
-            (particles[2], particles[2 + 2], -0.103109),
-        ]
-    ]
+    decays = [
+    DecayChannel(*p) for p in [
+        (particles[0], particles[1]),
+        (particles[0], particles[2]),
+        (particles[1], particles[2]),
+        (particles[3], particles[0]),
+        (particles[3], particles[1]),
+        (particles[3], particles[2]),
+        (particles[4], particles[0]),
+        (particles[4], particles[1]),
+        (particles[4], particles[2]),
+    ]]
     
-    solver = MultipletSolver(particles, all_decays)
-    # print(solver.charged_decays)
-    # print(solver.neutral_decays)
-    # print(all_decays)
-    # print(solver.all_configurations)
-    # print(solver.construct_configuration([2,1,1,1]))
-    # print(solver.check_consistency(1))
-    # print(solver.all_configurations)
+    model1 = Model([
+    Multiplet(Fraction(1,2), 1, Fraction(1,2), Fraction(1,2), 1), 
+    Multiplet(Fraction(1,2), 1, 0, 0, 1), 
+    Multiplet(Fraction(1,2), 1, 0, 0, 2),
+    Multiplet(Fraction(1,2), 1, 0, 1, 1)
+    ])
     
-    # For the SDDM the configurations are duplicated since we have two doublets.
-    for assignment in solver.assign_particles():
-        print(assignment)
-    print(len(solver.assign_particles()))
-    # print(list(itertools.permutations(solver.all_configurations[0])))
+    model2 = Model([
+    Multiplet(Fraction(1,2), 1, Fraction(1,2), Fraction(1,2), 1), 
+    Multiplet(Fraction(1,2), 1, Fraction(1,2), Fraction(1,2), 2), 
+    Multiplet(Fraction(1,2), 1, 0, 0, 1),
+    ])
 
+    # print(model1)
+    # print(model2.all_valid_assignments(particles, decays))
     
-    # for decay in all_decays: print(decay.modified_branching_ratio)
-    # print()
-    # for decay in all_decays: print(mod_braching_fraction(decay, all_decays))
+    solver = ModelsBuilder(particles, decays)
     
-    # Testing integer_partitions
-    # for partition in integer_partitions(5, 2):
-    #     print(partition)
-    # for partition in integer_partitions(10, 7):
-    #     print(partition)
+    print(solver.all_valid_assignments)
