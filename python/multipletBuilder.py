@@ -103,6 +103,9 @@ class Multiplet:
         
     @property
     def flavor_eigenstates(self):
+        """
+        Returns a list of the flavor eigenstates that contitute the multiplet.
+        """
         return [FlavorEigenstate(self, -self.isospin + i) for i in range(self.dimension)]
     
     
@@ -127,6 +130,14 @@ class Multiplet:
         return hash((self.spin, self.color, self.isospin, self.hypercharge, self.I))
     
     
+    def __iter__(self):
+        return iter(self.flavor_eigenstates)
+    
+    
+    def __getitem__(self, index):
+        return self.flavor_eigenstates[index]
+    
+    
     def __repr__(self):
         return f"SU(2) {self._multiplet_name} ({self.spin}, {self.color}; {self.isospin}, {self.hypercharge}, {self.I})"
     
@@ -135,13 +146,20 @@ class Multiplet:
         return self.__repr__()
     
     
-class FlavorEigenstate(Multiplet):
+class FlavorEigenstate:
     
-    def __init__(self, multiplet: Multiplet, isospin_projection: int | Fraction):
-        super().__init__(multiplet.spin, multiplet.color, multiplet.isospin, multiplet.hypercharge, multiplet.I)
+    def __init__(self, parent_multiplet: Multiplet, isospin_projection: int | Fraction):
+        
+        self.parent_multiplet = parent_multiplet
+        
+        self.spin = parent_multiplet.spin
+        self.color = parent_multiplet.color
+        self.isospin = parent_multiplet.isospin
+        self.hypercharge = parent_multiplet.hypercharge
+        self.I = parent_multiplet.I
         self.isospin_projection = isospin_projection
         
-        self.parent_multiplet = multiplet
+        
         self.charge = self.hypercharge + self.isospin_projection
         
         
@@ -165,10 +183,6 @@ class FlavorEigenstate(Multiplet):
             self.I, 
             self.isospin_projection
             ))
-        
-        
-    def __iter__(self):
-        yield self
     
         
     def __repr__(self):
@@ -190,8 +204,15 @@ class ParticleAssignment(UserDict):
         
     
     def __setitem__(self, key, value):
-        if not isinstance(value, set):
+        
+        if isinstance(value, set):
+            value = value
+            
+        elif isinstance(value, (list, tuple)):
             value = set(value)
+            
+        else: value = {value}
+        
         super().__setitem__(key, value)
         
     
@@ -231,7 +252,7 @@ class Model:
         """
         
         flavor_eigenstates = sorted(
-            [fe for m in self.multiplets for fe in m.flavor_eigenstates], key=lambda f: f.isospin_projection)
+            [f for multiplet in self.multiplets for f in multiplet], key=lambda f: f.isospin_projection)
         
         # 1. Separate in (spin, color, charge) to avoid doing more permutations than necessary
         spincolorcharges = set((p.spin, p.color, p.charge) for p in particles)
@@ -257,12 +278,12 @@ class Model:
         return all_possible_1to1s
     
     
-    def build_connections(self, assignment: ParticleAssignment, all_decays: List[DecayChannel]):
+    def build_connections(self, assignment: ParticleAssignment, all_decays: List[DecayChannel]) -> ParticleAssignment:
         """
         Uses the neutral decays to determine all the connections between mass and flavor eigenstates.
         """
         
-        final_assignment = ParticleAssignment({p: f for p, f in assignment.items()})
+        final_assignment = ParticleAssignment({p: set(f) for p, f in assignment.items()})
         neutral_decays = [decay for decay in all_decays if decay.neutral_decay]
         
         for decay in neutral_decays:
@@ -272,7 +293,7 @@ class Model:
         return final_assignment
     
     
-    def consistent(self, assignment: ParticleAssignment, all_decays: List[DecayChannel], where_failed: bool = False):
+    def is_consistent(self, assignment: ParticleAssignment, all_decays: List[DecayChannel], where_failed: bool = False):
         """
         For a given assignment to be deemed consistent, the following checks need to be True:
         
@@ -295,7 +316,7 @@ class Model:
         # does not see the decay channel because it is very small? Then, how to loosen up this 
         # condition a bit? Maybe consider if any of the decay happens, or "most".
         for multiplet in self.multiplets:
-            for f1, f2 in itertools.pairwise(multiplet.flavor_eigenstates):
+            for f1, f2 in itertools.pairwise(multiplet):
                 for p1, p2 in itertools.product(assignment.inverse[f1], assignment.inverse[f2]):
                     if DecayChannel(p1, p2) not in all_decays: 
                         return False
@@ -318,7 +339,8 @@ class Model:
             
             charged_violations.append(charged_violation)    
         
-        if any(charged_violations): return False        
+        if any(charged_violations): 
+            return False        
                     
         # 3. Isospin Check
         # Note: Need to be strict with the type allowed in isospins for FlavorEigenstates,
@@ -339,12 +361,13 @@ class Model:
                 
             neutral_violations.append(neutral_violation)
         
-        if any(neutral_violations): return False
+        if any(neutral_violations): 
+            return False
         
         return True
             
         
-    def all_valid_assignments(self, particles: List[Particle], all_decays: List[DecayChannel], where_failed: bool = False):
+    def all_valid_assignments(self, particles: List[Particle], all_decays: List[DecayChannel], where_failed: bool = False) -> List[ParticleAssignment]:
        
         assignments: List[ParticleAssignment] = []
         
@@ -352,12 +375,13 @@ class Model:
         initial_assignments: List[ParticleAssignment] = self.generate_initial_mappings(particles)
         
         # 2. Find the rest of the connections using neutral decays
+        connected_assignments: List[ParticleAssignment] = []
         for assignment in initial_assignments:
-            assignment = self.build_connections(assignment, all_decays)
+            connected_assignments.append(self.build_connections(assignment, all_decays))
         
         # 3. Use consistency checks to eliminate certain assignments
-        for assignment in initial_assignments:
-            if self.consistent(assignment, all_decays, where_failed):
+        for assignment in connected_assignments:
+            if self.is_consistent(assignment, all_decays, where_failed):
                 assignments.append(assignment)
         
         # 4. Remove duplicates.
@@ -460,7 +484,7 @@ class ModelsBuilder:
         return all_partitions
     
     
-    def assign_model(self, spin: int | Fraction, color: int, charge_partitions: Tuple[Tuple[int]]) -> Model:
+    def assign_model(self, spin: int | Fraction, color: int, charge_partition: Tuple[Tuple[int]]) -> Model:
         """
         A charge partition has a 1 to 1 correspondence to a Model.
         Given something like ((0,), (0, 1), (0, 1)) one can spot one SU(2) singlet and two SU(2) doublets,
@@ -469,14 +493,14 @@ class ModelsBuilder:
         
         multiplets: List[Multiplet] = []
         
-        for partition in charge_partitions:
+        for sequence in charge_partition:
             
             I: int = 0
             
-            dimension: int = len(partition)
+            dimension: int = len(sequence)
             isospin: Fraction = Fraction(dimension - 1, 2)
             
-            smallest_charge: int | Fraction = min(partition)
+            smallest_charge: int | Fraction = min(sequence)
             # isospin projection m for the smallest charge is m = -j.
             # since we are using q = y + m => y = q - m, y = q_min + j.
             hypercharge: int | Fraction = smallest_charge + isospin
