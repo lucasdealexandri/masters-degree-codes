@@ -8,11 +8,13 @@ from collections import UserDict, defaultdict
 
 class Particle:
     
-    def __init__(self, label: str, spin: int | Fraction, color: int, charge: int | Fraction, mass: float):
+    def __init__(self, label: str, spin: int | float, color: int, charge: int | float, mass: float):
         self.label = label
-        self.spin = spin
+        # spin is either going to be 0, 1/2 or 1. In all cases, this is correctly converted to a fraction.
+        self.spin = Fraction(spin)
         self.color = color
-        self.charge = charge
+        # if charge is something like 1/6 for instance, this correctly casts it to Fraction(1,6)
+        self.charge = Fraction(charge).limit_denominator(100)
         self.mass = mass
         
         self.unbroken_qns = (spin, color, charge)
@@ -84,12 +86,12 @@ class DecayChannel:
     
 class Multiplet:
     
-    def __init__(self, spin: int | Fraction, color: int, isospin: int | Fraction, hypercharge: int | Fraction, I: int):
-        self.spin = spin
+    def __init__(self, spin: int | float, color: int, isospin: int | float, hypercharge: int | float, index: int):
+        self.spin: Fraction = Fraction(spin)
         self.color = color
-        self.isospin = isospin
-        self.hypercharge = hypercharge
-        self.I = I
+        self.isospin: Fraction = Fraction(isospin).limit_denominator(100)
+        self.hypercharge = Fraction(hypercharge).limit_denominator(100)
+        self.index = index
         
         self.dimension = int(2*isospin + 1)
 
@@ -118,8 +120,8 @@ class Multiplet:
         same_color = self.color == other.color
         same_isospin = self.isospin == other.isospin
         same_hypercharge = self.hypercharge == other.hypercharge
-        same_I = self.I == other.I
-        return same_spin and same_color and same_hypercharge and same_isospin and same_I
+        same_index = self.index == other.index
+        return same_spin and same_color and same_hypercharge and same_isospin and same_index
     
     
     def __ne__(self, other):
@@ -127,7 +129,7 @@ class Multiplet:
     
     
     def __hash__(self):
-        return hash((self.spin, self.color, self.isospin, self.hypercharge, self.I))
+        return hash((self.spin, self.color, self.isospin, self.hypercharge, self.index))
     
     
     def __iter__(self):
@@ -139,7 +141,7 @@ class Multiplet:
     
     
     def __repr__(self):
-        return f"SU(2) {self._multiplet_name} ({self.spin}, {self.color}; {self.isospin}, {self.hypercharge}, {self.I})"
+        return f"SU(2) {self._multiplet_name} ({self.spin}, {self.color}; {self.isospin}, {self.hypercharge}, {self.index})"
     
     
     def __str__(self):
@@ -148,7 +150,7 @@ class Multiplet:
     
 class FlavorEigenstate:
     
-    def __init__(self, parent_multiplet: Multiplet, isospin_projection: int | Fraction):
+    def __init__(self, parent_multiplet: Multiplet, isospin_projection: int | float):
         
         self.parent_multiplet = parent_multiplet
         
@@ -156,8 +158,8 @@ class FlavorEigenstate:
         self.color = parent_multiplet.color
         self.isospin = parent_multiplet.isospin
         self.hypercharge = parent_multiplet.hypercharge
-        self.I = parent_multiplet.I
-        self.isospin_projection = isospin_projection
+        self.index = parent_multiplet.index
+        self.isospin_projection = Fraction(isospin_projection).limit_denominator(100)
         
         
         self.charge = self.hypercharge + self.isospin_projection
@@ -180,14 +182,14 @@ class FlavorEigenstate:
             self.color, 
             self.isospin, 
             self.hypercharge, 
-            self.I, 
+            self.index, 
             self.isospin_projection
             ))
     
         
     def __repr__(self):
-        # return f"({self.spin}, {self.color}; {self.isospin}, {self.hypercharge}, {self.I}, {self.isospin_projection}) from SU(2) {self.parent_multiplet._multiplet_name}"
-        return f"({self.isospin}, {self.hypercharge}, {self.I}, {self.isospin_projection})"
+        # return f"({self.spin}, {self.color}; {self.isospin}, {self.hypercharge}, {self.index}, {self.isospin_projection}) from SU(2) {self.parent_multiplet._multiplet_name}"
+        return f"({self.isospin}, {self.hypercharge}, {self.index}, {self.isospin_projection})"
         
         
     def __str__(self):
@@ -319,6 +321,7 @@ class Model:
             for f1, f2 in itertools.pairwise(multiplet):
                 for p1, p2 in itertools.product(assignment.inverse[f1], assignment.inverse[f2]):
                     if DecayChannel(p1, p2) not in all_decays: 
+                        if where_failed: print(f"Failed in Mandatory Charged Decay Check.")
                         return False
                     
         # 2. Forbidden Charged Decay
@@ -337,9 +340,12 @@ class Model:
                 # flavor eigenstate from the other, then there is no charged violation.
                 if f1.parent_multiplet == f2.parent_multiplet: charged_violation = False
             
+            if charged_violation and where_failed: print(f"Forbidden Charged Decay between {p1} and {p2}.")
+            
             charged_violations.append(charged_violation)    
         
         if any(charged_violations): 
+            if where_failed: print(f"Failed in Forbidden Charged Decay Check.")
             return False        
                     
         # 3. Isospin Check
@@ -358,10 +364,13 @@ class Model:
             for f1, f2 in itertools.product(assignment[p1], assignment[p2]):
                 
                 if abs(f1.isospin - f2.isospin) == Fraction(1,2): neutral_violation = False
-                
+            
+            if neutral_violation and where_failed: print(f"Isospin violation between {p1} and {p2}.")    
+            
             neutral_violations.append(neutral_violation)
         
         if any(neutral_violations): 
+            if where_failed: print(f"Failed in Isospin Check.")
             return False
         
         return True
@@ -471,12 +480,12 @@ class ModelsBuilder:
     
     
     @property
-    def all_valid_partitions(self) -> defaultdict:
+    def all_valid_partitions(self) -> Dict[Tuple[Fraction, int], Set[Tuple[Tuple[Fraction]]]]:
         """
         Calculates valid_charge_partitions for each (spin, color) combination from the input.
         returns {(spin1, color1): charge_partitions1, (spin2, color2): charge_partitions2], ...}
         """
-        all_partitions = defaultdict(list)
+        all_partitions = {}
             
         for spincolor, charges in self.grouped_spincolor.items():
             all_partitions[spincolor] = self.valid_charge_partitions(charges)
@@ -484,12 +493,14 @@ class ModelsBuilder:
         return all_partitions
     
     
-    def assign_model(self, spin: int | Fraction, color: int, charge_partition: Tuple[Tuple[int]]) -> Model:
+    def assign_model(self, spin: int | float, color: int, charge_partition: Tuple[Tuple[int]]) -> Model:
         """
         A charge partition has a 1 to 1 correspondence to a Model.
         Given something like ((0,), (0, 1), (0, 1)) one can spot one SU(2) singlet and two SU(2) doublets,
         as well as their hypercharges.
         """
+        
+        spin = Fraction(spin)
         
         multiplets: List[Multiplet] = []
         
@@ -500,10 +511,10 @@ class ModelsBuilder:
             dimension: int = len(sequence)
             isospin: Fraction = Fraction(dimension - 1, 2)
             
-            smallest_charge: int | Fraction = min(sequence)
+            smallest_charge: Fraction = min(sequence)
             # isospin projection m for the smallest charge is m = -j.
             # since we are using q = y + m => y = q - m, y = q_min + j.
-            hypercharge: int | Fraction = smallest_charge + isospin
+            hypercharge: Fraction = smallest_charge + isospin
             
             # Update I until it is unique
             while Multiplet(spin, color, isospin, hypercharge, I) in multiplets:
